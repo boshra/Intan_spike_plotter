@@ -17,6 +17,5 @@ SOURCES += main.cpp \
     tcpclient.cpp
 
 HEADERS  += \
-    circularbuffer.h \
     qcustomplot.h \
     tcpclient.h

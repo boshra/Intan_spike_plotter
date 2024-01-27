@@ -1,9 +1,12 @@
 #include <QtGui>
 #include <QtNetwork>
+#include <QtConcurrent/QtConcurrent>
 
+#include <iostream>
 #include <stdio.h>
 
 #include "tcpclient.h"
+#include "qcustomplot.h"
 
 
 TCPClient::TCPClient(QWidget *parent)
@@ -65,17 +68,25 @@ TCPClient::TCPClient(QWidget *parent)
     waveformLabel = new QLabel("Waveform data blocks received: ");
     waveformText = new QLabel;
 
-    channels = 32;
+    channels = 10;
 
     // Panel for plots
     QCustomPlot *plot;
-    QCPGraph *graph;
 
+    char title[50];
+    // QVector<int> spikes;
+
+    counters.resize(channels);
     for (int channel=0;channel<channels;++channel){
         plot = new QCustomPlot();
 
+        plot->plotLayout()->insertRow(0);
+
+        std::sprintf(title, "Channel %d",channel);
+        plot->plotLayout()->addElement(0,0, new QCPTextElement(plot,title));
         // Set up real-time data plot
-        graph = plot->addGraph();
+        for(int s=0;s<totalSpikesPerChannel;++s)
+            plot->addGraph();
 
         // Set up axes labels
         plot->xAxis->setLabel("Time");
@@ -86,7 +97,9 @@ TCPClient::TCPClient(QWidget *parent)
         plot->yAxis->setRange(-400, 400);
 
         customplots.append(plot);
-        graphs.append(graph);
+        // graphs.append(graph);
+
+        counters[channel] = 0;
 
     }
 
@@ -138,22 +151,25 @@ TCPClient::TCPClient(QWidget *parent)
     waveformRow->addWidget(waveformLabel);
     waveformRow->addWidget(waveformText);
 
-    QHBoxLayout *plotsRow = new QHBoxLayout;
+    QHBoxLayout *plotsRowOne = new QHBoxLayout;
+    QHBoxLayout *plotsRowTwo = new QHBoxLayout;
+    QHBoxLayout *plotsRowThree = new QHBoxLayout;
+
     for (int channel=0;channel<channels;++channel)
-        plotsRow->addWidget(customplots[channel]);
+        if (channel %3 == 0)
+            plotsRowOne->addWidget(customplots[channel]);
+        else if (channel %3 == 1)
+            plotsRowTwo->addWidget(customplots[channel]);
+        else if (channel %3 == 2)
+            plotsRowThree->addWidget(customplots[channel]);
 
 
-    mainLayout->addLayout(socketsRow);
-
-    mainLayout->addWidget(routineLabel);
     mainLayout->addWidget(startRoutineButton);
-    // mainLayout->addWidget(messageLabel);
-    // mainLayout->addWidget(messages);
-    // mainLayout->addWidget(commandLabel);
-    // mainLayout->addWidget(commandsTextEdit);
-    mainLayout->addLayout(timestampRow);
     mainLayout->addLayout(waveformRow);
-    mainLayout->addLayout(plotsRow);
+    mainLayout->addLayout(plotsRowOne);
+    mainLayout->addLayout(plotsRowTwo);
+    mainLayout->addLayout(plotsRowThree);
+
     // mainLayout->addWidget(sendCommandButton);
 
     setLayout(mainLayout);
@@ -163,28 +179,38 @@ TCPClient::TCPClient(QWidget *parent)
     waveformBytesPerFrame = 4 + 2 * channels;
     allBytesPerFrame = waveformBytesPerFrame + 4;
     waveformBytesPerBlock = 128 * waveformBytesPerFrame + 4;
-    blocksPerRead = 10;
-    waveformBytes10Blocks = blocksPerRead * waveformBytesPerBlock;
-    waveformInputBuffer.resize(waveformBytes10Blocks);
-
-    waveform10blocks.resize(channels);
-
-    for  (int i = 0; i < channels; i++) {
-        waveform10blocks[i].resize(128*blocksPerRead);
-    }
-    // timestamps10blocks.append(new QVector<float>(128*blocksPerRead));
-
+    blocksPerRead = 60;
+    waveformBytesMultiBlocks = blocksPerRead * waveformBytesPerBlock;
+    waveformInputBuffer.resize(waveformBytesMultiBlocks);
 
     totalWaveformDataBlocksProcessed = 0;
+
+
+    std::unique_ptr<std::mutex[]> mutices( new std::mutex[channels] );
 
 }
 
 // Slot to update plot with new data
-void TCPClient::updatePlot(QVector<double> waveform, QVector<double> timestamps, int channel)
+extern void TCPClient::updatePlot(QVector<double> waveform, QVector<double> timestamps, int channel)
 {
     // Update plot
-    graphs[channel]->setData(timestamps, waveform);
-    customplots[channel]->replot();
+    if (channel % 3 == 0)
+        mut1.lock();
+    else if (channel % 3 == 1)
+        mut2.lock();
+    else
+        mut3.lock();
+
+    customplots[channel]->graph(counters[channel])->setData(timestamps, waveform);
+    customplots[channel]->replot(QCustomPlot::RefreshPriority::rpQueuedReplot);
+    counters[channel] = (counters[channel] + 1) % totalSpikesPerChannel;
+
+    if (channel % 3 == 0)
+        mut1.unlock();
+    else if (channel % 3 == 1)
+        mut2.unlock();
+    else
+        mut3.unlock();
 }
 
 bool TCPClient::eventFilter(QObject *obj, QEvent *event)
@@ -249,7 +275,7 @@ void TCPClient::startRoutineSlot()
     // Enable wide output for first 32 channels
     char command[50];
 
-    for(int i = 0;i<32;i++) {
+    for(int i = 0;i<channels;i++) {
         sprintf(command, "set a-%03d.tcpdataoutputenabledhigh true;", i);
         commandSocket->write(command);
         commandSocket->waitForBytesWritten();
@@ -307,7 +333,7 @@ void TCPClient::waveformDisconnected()
 // Read waveform data in 10-block chunks when it comes in on TCP Waveform Data Sockets
 void TCPClient::readWaveform()
 {
-    if (waveformSocket->bytesAvailable() > waveformBytes10Blocks) {
+    if (waveformSocket->bytesAvailable() > waveformBytesMultiBlocks) {
         processWaveformChunk();
     }
 
@@ -319,7 +345,11 @@ void TCPClient::readWaveform()
 // If more sophisticated processing of incoming waveform data is desired, this function should be expanded.
 void TCPClient::processWaveformChunk()
 {
-    waveformInputBuffer = waveformSocket->read(waveformBytes10Blocks);
+    QFuture<void> future;
+    QThreadPool pool;
+
+    std::cout << "Called process chunk " << ((float) clock()) / CLOCKS_PER_SEC << std::endl;
+    waveformInputBuffer = waveformSocket->read(waveformBytesMultiBlocks);
     QVector<double> timestamps;
     QVector<double> waveform;
 
@@ -382,13 +412,16 @@ void TCPClient::processWaveformChunk()
                     timelock.append((double)(k-peak) / 30.0);
 
                 }
-                updatePlot(spike, timelock, channel);
+                // if (channel % 5 == 0)
+                    QtConcurrent::run(&pool,this, &TCPClient::updatePlot, spike, timelock, channel);
+                // else
+                    // updatePlot(spike, timelock, channel);
             }
             else
                 i++;
         }
     }
 
-    totalWaveformDataBlocksProcessed += 10;
+    totalWaveformDataBlocksProcessed += blocksPerRead;
     waveformText->setText(QString::number(totalWaveformDataBlocksProcessed));
 }

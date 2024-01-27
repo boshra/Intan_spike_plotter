@@ -2,7 +2,6 @@
 #define TCPCLIENT_H
 
 #include "qcustomplot.h"
-#include "circularbuffer.h"
 #include <QtWidgets>
 
 class QTcpSocket;
@@ -55,19 +54,17 @@ private:
 
     QByteArray waveformInputBuffer;
 
-    QVector<QVector <float>> waveform10blocks;
-
-    //Channel X 20 waveforms X times
-    QVector<CircularBuffer> spikewaveforms;
-
     QVector<QCustomPlot*> customplots;
-    QVector<QCPGraph*> graphs;
+
+    QMutex mut1;
+    QMutex mut2;
+    QMutex mut3;
 
     int waveformBytesPerFrame;
     int waveformBytesPerBlock;
     int allBytesPerFrame;
     int blocksPerRead;
-    int waveformBytes10Blocks;
+    int waveformBytesMultiBlocks;
     int channels;
 
     int totalWaveformDataBlocksProcessed;
@@ -75,6 +72,7 @@ private:
     int spikethreshold = -30;
     int totalSpikesPerChannel = 20;
     int samplingRate = 30000;
+    QVector<int> counters;
 
     void processWaveformChunk();
 
