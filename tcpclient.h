@@ -21,30 +21,10 @@ public:
 private:
     QTcpSocket *commandSocket;
     QTcpSocket *waveformSocket;
-    QLabel *commandHostLabel;
-    QLineEdit *commandHost;
-    QLabel *waveformHostLabel;
-    QLineEdit *waveformHost;
-    QLabel *commandPortLabel;
-    QSpinBox *commandPort;
-    QLabel *waveformPortLabel;
-    QSpinBox *waveformPort;
+    QString waveformHost, commandHost;
+    int waveformPort, commandPort;
 
-    QPushButton *commandConnectButton;
-    QPushButton *commandDisconnectButton;
-    QPushButton *waveformConnectButton;
-    QPushButton *waveformDisconnectButton;
-
-    QLabel *routineLabel;
     QPushButton *startRoutineButton;
-    QLabel *messageLabel;
-    QTextEdit *messages;
-    QLabel *commandLabel;
-    QTextEdit *commandsTextEdit;
-    QPushButton *sendCommandButton;
-
-    QLabel *timestampLabel;
-    QLabel *timestampText;
 
     QLabel *waveformLabel;
     QLabel *waveformText;
@@ -55,6 +35,10 @@ private:
     QByteArray waveformInputBuffer;
 
     QVector<QCustomPlot*> customplots;
+    QJsonArray channel_settings;
+    QJsonArray channel_thresholds;
+
+    QVector<int> spikethresholds;
 
     QMutex mut1;
     QMutex mut2;
@@ -69,36 +53,19 @@ private:
 
     int totalWaveformDataBlocksProcessed;
 
-    int spikethreshold = -30;
     int totalSpikesPerChannel = 20;
     int samplingRate = 30000;
     QVector<int> counters;
 
     void processWaveformChunk();
 
-protected:
-    bool eventFilter(QObject *obj, QEvent *event);
-
 public slots:
     void connectCommandToHost();
     void connectWaveformToHost();
-
     void disconnectCommandFromHost();
     void disconnectWaveformFromHost();
-
     void startRoutineSlot();
-
-    void commandConnected();
-    void commandDisconnected();
-
-    void waveformConnected();
-    void waveformDisconnected();
-
-    void readCommandServer();
-    void sendCommand();
-
     void readWaveform();
-
     void updatePlot(QVector<double> waveform, QVector<double> timestamps, int channel);
 
 };

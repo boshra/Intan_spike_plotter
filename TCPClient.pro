@@ -19,3 +19,6 @@ SOURCES += main.cpp \
 HEADERS  += \
     qcustomplot.h \
     tcpclient.h
+
+DISTFILES += \
+    settings.json
